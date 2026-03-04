@@ -67,42 +67,39 @@ void write_csv(const char* filename, int N, int fs, double complex *result) {
     fclose(f);
 }
 
-void iterative_fft(double complex *x, int N) {
-    // 1. BIT-REVERSAL PERMUTATION
-    int j = 0;
-    for (int i = 1; i < N; i++) {
-        int bit = N >> 1;
-        while (j & bit) {
-            j ^= bit;
-            bit >>= 1;
-        }
-        j ^= bit;
-        if (i < j) {
-            double complex temp = x[i];
-            x[i] = x[j];
-            x[j] = temp;
-        }
+void recursive_fft(double complex *x, int N) {
+    // Basfall
+    if (N <= 1) return;
+
+    // 1. Dela upp i jämna och udda index
+    // Här skapar vi nya minnesblock, precis som "new" i Java
+    double complex *even = malloc((N / 2) * sizeof(double complex));
+    double complex *odd = malloc((N / 2) * sizeof(double complex));
+
+    for (int i = 0; i < N / 2; i++) {
+        even[i] = x[2 * i];
+        odd[i] = x[2 * i + 1];
     }
 
-    // 2. BUTTERFLY BERÄKNINGAR
-    for (int length = 2; length <= N; length <<= 1) {
-        double ang = -2.0 * PI / length;
-        double complex w_m = cexp(I * ang); // I är den imaginära enheten i C
+    // 2. Rekursiva anrop
+    recursive_fft(even, N / 2);
+    recursive_fft(odd, N / 2);
+
+    // 3. Slå ihop resultaten (Butterfly)
+    for (int k = 0; k < N / 2; k++) {
+        double ang = -2.0 * PI * k / N;
+        double complex w = cexp(I * ang); // Twiddle factor
         
-        for (int i = 0; i < N; i += length) {
-            double complex w = 1.0 + 0.0 * I;
-            for (int k = i; k < i + length / 2; k++) {
-                // Butterfly-matematik
-                double complex u = x[k];
-                double complex t = w * x[k + length / 2];
-                
-                x[k] = u + t;
-                x[k + length / 2] = u - t;
-                
-                w *= w_m;
-            }
-        }
+        double complex t = w * odd[k];
+        
+        x[k] = even[k] + t;
+        x[k + N / 2] = even[k] - t;
     }
+
+    // Mycket viktigt i C: Frigör minnet vi skapade!
+    // Java gör detta automatiskt via Garbage Collector, men här gör vi det manuellt.
+    free(even);
+    free(odd);
 }
 
 int main() {
@@ -120,7 +117,7 @@ int main() {
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
-    iterative_fft(test_signal, N);
+    recursive_fft(test_signal, N);
 
     clock_gettime(CLOCK_MONOTONIC, &end);
     // 3. Tidmätning SLUT
@@ -129,7 +126,7 @@ int main() {
     printf("C FFT (N=%d) klar pa %.4f ms\n", N, time_taken);
 
     // 4. Spara till CSV för analys
-    write_csv("fft_results_c.csv", N, fs, test_signal);
+    write_csv("recursive_fft_results_c.csv", N, fs, test_signal);
 
     free(test_signal);
     return 0;
