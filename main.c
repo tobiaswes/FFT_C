@@ -3,8 +3,12 @@
 #include <math.h>
 #include <complex.h>
 #include <time.h>
+#include <string.h>
 
 #define PI 3.14159265358979323846
+
+// Global variabel för att spåra allokerat minne i den rekursiva funktionen
+long long current_iteration_memory = 0;
 
 // Struktur för att hålla koll på WAV-headern (förenklad)
 typedef struct {
@@ -71,6 +75,11 @@ void recursive_fft(double complex *x, int N) {
     // Basfall
     if (N <= 1) return;
 
+    // --- HÄR ÄR FIXEN ---
+    // Vi räknar ut hur mycket minne dessa två malloc kommer att kräva
+    size_t size_per_array = (N / 2) * sizeof(double complex);
+    current_iteration_memory += (size_per_array * 2);
+
     // 1. Dela upp i jämna och udda index
     // Här skapar vi nya minnesblock, precis som "new" i Java
     double complex *even = malloc((N / 2) * sizeof(double complex));
@@ -103,31 +112,77 @@ void recursive_fft(double complex *x, int N) {
 }
 
 int main() {
-    int N = 4096; 
+    int N = 4096;
     int fs;
+    int iterations = 100;
     
-    // 1. Läs in ljudfilen
-    double complex *test_signal = read_wav("A5_test.wav", N, &fs);
-    if (!test_signal) {
-        printf("Kunde inte lasa filen!\n");
-        return 1;
+    double *times = malloc(iterations * sizeof(double));
+    long long *mem_usages = malloc(iterations * sizeof(long long));
+
+    double complex *original_signal = read_wav("A5_test.wav", N, &fs);
+    if (!original_signal) return 1;
+
+    printf("Startar %d iterationer i C...\n", iterations);
+
+    for (int i = 0; i < iterations; i++) {
+        // Skapa en kopia inför varje körning (motsvarar clone() i Java)
+        double complex *working_copy = malloc(N * sizeof(double complex));
+        memcpy(working_copy, original_signal, N * sizeof(double complex));
+
+        current_iteration_memory = 0; // Nollställ minnesmätaren för denna runda
+
+        struct timespec start, end;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+
+        recursive_fft(working_copy, N);
+
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        
+        double time_ms = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1000000.0;
+        
+        times[i] = time_ms;
+        mem_usages[i] = current_iteration_memory;
+
+        free(working_copy);
     }
 
-    // 2. Tidmätning START
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
+    // Beräkna statistik
+    double sum_time = 0, min_time = times[0], max_time = times[0];
+    long long sum_mem = 0, min_mem = mem_usages[0], max_mem = mem_usages[0];
 
-    recursive_fft(test_signal, N);
+    for (int i = 0; i < iterations; i++) {
+        sum_time += times[i];
+        if (times[i] < min_time) min_time = times[i];
+        if (times[i] > max_time) max_time = times[i];
 
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    // 3. Tidmätning SLUT
+        sum_mem += mem_usages[i];
+        if (mem_usages[i] < min_mem) min_mem = mem_usages[i];
+        if (mem_usages[i] > max_mem) max_mem = mem_usages[i];
+    }
 
-    double time_taken = (end.tv_sec - start.tv_sec) * 1e3 + (end.tv_nsec - start.tv_nsec) / 1e6;
-    printf("C FFT (N=%d) klar pa %.4f ms\n", N, time_taken);
+    // Presentation (Samma format som Java)
+    printf("\n====================================================\n");
+    printf("   RESULTAT: C REKURSIV FFT (N=%d)\n", N);
+    printf("====================================================\n");
+    printf("ANTAL KORNINGAR: %d\n\n", iterations);
+    
+    printf("TID (Millisekunder)\n");
+    printf("  Medel: %.4f ms\n", sum_time / iterations);
+    printf("  Min:   %.4f ms\n", min_time);
+    printf("  Max:   %.4f ms\n\n", max_time);
 
-    // 4. Spara till CSV för analys
-    write_csv("recursive_fft_results_c.csv", N, fs, test_signal);
+    printf("MINNE (Kilobytes allokerat under korning)\n");
+    printf("  Medel: %.2f KB\n", (sum_mem / iterations) / 1024.0);
+    printf("  Min:   %.2f KB\n", min_mem / 1024.0);
+    printf("  Max:   %.2f KB\n", max_mem / 1024.0);
+    printf("====================================================\n");
 
-    free(test_signal);
+    // Spara sista körningen till CSV för validering
+    recursive_fft(original_signal, N);
+    write_csv("recursive_fft_results_c.csv", N, fs, original_signal);
+
+    free(original_signal);
+    free(times);
+    free(mem_usages);
     return 0;
 }
